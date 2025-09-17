@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tesla Live Navigator</title>
+<style>
+  body { font-family: sans-serif; margin:0; padding:0; background:#222; color:#fff; }
+  #map { height: 75vh; width: 100%; }
+  #controls { padding:10px; background:#333; display:flex; gap:5px; flex-wrap:wrap; }
+  input, button { padding:8px; font-size:16px; }
+  #nextStep { padding:15px; background:#111; font-size:18px; font-weight:bold; text-align:center; }
+</style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+</head>
+<body>
+
+<div id="controls">
+  <input type="text" id="dest" placeholder="Enter destination (address or lat,lng)">
+  <button id="startBtn">Start Navigation</button>
+</div>
+<div id="map"></div>
+<div id="nextStep">Enter a destination to start</div>
+
+<script>
+let map = L.map('map').fitWorld();
+let routingControl = null;
+let currentInstructions = [];
+let stepIndex = 0;
+let userMarker;
+
+// Add OSM tiles
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenStreetMap contributors'
+}).addTo(map);
+
+// Track user
+map.locate({setView: true, maxZoom: 16, watch: true});
+map.on('locationfound', function(e) {
+  if (!userMarker) {
+    userMarker = L.marker(e.latlng).addTo(map);
+  } else {
+    userMarker.setLatLng(e.latlng);
+  }
+  map.setView(e.latlng, 16);
+});
+
+// Navigation button
+document.getElementById('startBtn').addEventListener('click', async () => {
+  let destInput = document.getElementById('dest').value;
+  if (!destInput) { alert('Enter destination'); return; }
+
+  let pos = map.getCenter();
+  let start = [pos.lat, pos.lng];
+
+  let dest;
+  if (/^\s*-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?\s*$/.test(destInput)) {
+    let parts = destInput.split(',').map(Number);
+    dest = [parts[0], parts[1]];
+  } else {
+    let resp = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(destInput)}`);
+    let data = await resp.json();
+    if (!data || data.length === 0) { alert('Destination not found'); return; }
+    dest = [parseFloat(data[0].lat), parseFloat(data[0].lon)];
+  }
+
+  if (routingControl) map.removeControl(routingControl);
+
+  routingControl = L.Routing.control({
+    waypoints: [ L.latLng(start[0], start[1]), L.latLng(dest[0], dest[1]) ],
+    routeWhileDragging: false,
+    addWaypoints: false,
+    draggableWaypoints: false,
+    createMarker: () => null,
+    lineOptions: { styles: [{color: 'blue', opacity:0.7, weight:5}] }
+  }).addTo(map);
+
+  routingControl.on('routesfound', function(e) {
+    let route = e.routes[0];
+    currentInstructions = route.instructions.map(i => i.text);
+    stepIndex = 0;
+    showNextStep();
+  });
+});
+
+function showNextStep() {
+  if (stepIndex < currentInstructions.length) {
+    let stepText = currentInstructions[stepIndex];
+    document.getElementById('nextStep').textContent = "Next: " + stepText;
+    let utter = new SpeechSynthesisUtterance(stepText);
+    speechSynthesis.speak(utter);
+    stepIndex++;
+    setTimeout(showNextStep, 10000); // show next step after 10s (approx driving time)
+  } else {
+    document.getElementById('nextStep').textContent = "Arrived at destination";
+    let utter = new SpeechSynthesisUtterance("You have arrived at your destination");
+    speechSynthesis.speak(utter);
+  }
+}
+</script>
+
+</body>
+</html>
